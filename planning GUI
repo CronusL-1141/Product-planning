@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <title>产品规划静态原型</title>
+  <style>
+    body { font-family: sans-serif; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 6px 10px;
+      text-align: center;
+      vertical-align: middle;
+    }
+    th { background-color: #f2f2f2; }
+    input[type="number"], input[type="text"] { width: 80px; }
+    .locked { background-color: #eee; }
+    .editable {
+      border: none;
+      background-color: transparent;
+      width: 100%;
+      text-align: center;
+    }
+    .editable:focus {
+      outline: 1px solid #aaa;
+      background-color: #f9f9f9;
+    }
+    .lock-toggle { cursor: pointer; }
+    button.add-btn { font-size: 12px; margin: 2px; }
+    tfoot td { font-weight: bold; background-color: #f8f8f8; }
+    .summary-table {
+      margin-top: 40px;
+      width: 300px;
+      border: 1px solid #aaa;
+    }
+    .summary-table th, .summary-table td {
+      border: 1px solid #ccc;
+      padding: 4px 8px;
+    }
+  </style>
+</head>
+<body>
+
+<h2 id="page-title" contenteditable="true" onblur="updateTitle()">2025年末目标 - 产品规划表</h2>
+<button onclick="addMain()">➕ 新主分类</button>
+<table>
+  <thead id="table-header"></thead>
+  <tbody id="table-body"></tbody>
+  <tfoot>
+    <tr>
+      <td colspan="4">合计</td>
+      <td id="total-scale">0</td>
+      <td>100%</td>
+      <td id="total-count">0</td>
+      <td>--</td>
+      <td></td>
+    </tr>
+  </tfoot>
+</table>
+
+<div id="summary"></div>
+
+<script>
+let pageTitle = "2025年末目标 - 产品规划表";
+let mainLabel = "主分类";
+let sub1Label = "子类一";
+let sub2Label = "子类二";
+let summaryLocks = {};
+let data = loadData();
+
+const defaultData = [
+  {
+    main: "个金",
+    subs: [
+      {
+        sub1: "纯固收",
+        sub2s: [
+          { sub2: "开放式", rate: "", scale: "", count: "", scaleLocked: false, countLocked: false },
+          { sub2: "封闭式", rate: "", scale: "", count: "", scaleLocked: false, countLocked: false }
+        ]
+      }
+    ]
+  }
+];
+
+function createDataRow(sub2) {
+  return { sub2, rate: "", scale: "", count: "", scaleLocked: false, countLocked: false };
+}
+
+function updateTitle() {
+  pageTitle = document.getElementById("page-title").textContent.trim();
+  saveData();
+}
+
+function updateHeader(th, labelVar) {
+  window[labelVar] = th.textContent.trim();
+  saveData();
+  renderTable(); // 关键！失焦实时刷新统计表
+}
+
+
+function saveData() {
+  localStorage.setItem("productPlanningData", JSON.stringify({
+    data, pageTitle, mainLabel, sub1Label, sub2Label, summaryLocks
+  }));
+}
+
+function loadData() {
+  const saved = localStorage.getItem("productPlanningData");
+  if (!saved) return JSON.parse(JSON.stringify(defaultData));
+  try {
+    const obj = JSON.parse(saved);
+    pageTitle = obj.pageTitle || pageTitle;
+    mainLabel = obj.mainLabel || mainLabel;
+    sub1Label = obj.sub1Label || sub1Label;
+    sub2Label = obj.sub2Label || sub2Label;
+    summaryLocks = obj.summaryLocks || {};
+    return obj.data || defaultData;
+  } catch {
+    return JSON.parse(JSON.stringify(defaultData));
+  }
+}
+
+function renderHeader() {
+  const thead = document.getElementById("table-header");
+  thead.innerHTML = "";
+  const tr = document.createElement("tr");
+  [mainLabel, sub1Label, sub2Label].forEach((label, i) => {
+    const th = document.createElement("th");
+    th.contentEditable = true;
+    th.textContent = label;
+    th.onblur = () => {
+      // 多加一层防抖
+      const newLabel = th.textContent.trim();
+      if (window[["mainLabel", "sub1Label", "sub2Label"][i]] !== newLabel) {
+        window[["mainLabel", "sub1Label", "sub2Label"][i]] = newLabel;
+        saveData();
+        renderTable();
+      }
+    };
+    tr.appendChild(th);
+  });
+  ["费率", "规模（亿元）", "占比", "只数", "单只规模", "操作"].forEach(text => {
+    const th = document.createElement("th");
+    th.textContent = text;
+    tr.appendChild(th);
+  });
+  thead.appendChild(tr);
+}
+
+function renderTable() {
+  renderHeader();
+  document.getElementById("page-title").textContent = pageTitle;
+  const tbody = document.getElementById("table-body");
+  tbody.innerHTML = "";
+
+  let totalScale = 0, totalCount = 0;
+  let groupMain = {}, groupSub1 = {}, groupSub2 = {};
+
+  data.forEach((m, mi) => {
+    m.subs.forEach((s1, si) => {
+      s1.sub2s.forEach((row, ri) => {
+        const tr = document.createElement("tr");
+
+        const rowspanMain = m.subs.reduce((sum, s) => sum + s.sub2s.length, 0);
+        const rowspanSub1 = s1.sub2s.length;
+
+        if (si === 0 && ri === 0) {
+          tr.innerHTML += `<td rowspan="${rowspanMain}">
+            <input class="editable" value="${m.main}" onblur="data[${mi}].main=this.value; saveData(); renderTable()">
+            <br><button class='add-btn' onclick='addSub1(${mi})'>➕ 子类一</button></td>`;
+        }
+
+        if (ri === 0) {
+          tr.innerHTML += `<td rowspan="${rowspanSub1}">
+            <input class="editable" value="${s1.sub1}" onblur="data[${mi}].subs[${si}].sub1=this.value; saveData(); renderTable()">
+            <br><button class='add-btn' onclick='addSub2(${mi},${si})'>➕ 子类二</button></td>`;
+        }
+
+        const scale = parseFloat(row.scale) || 0;
+        const count = parseFloat(row.count) || 0;
+        totalScale += scale;
+        totalCount += count;
+        groupMain[m.main] = (groupMain[m.main] || 0) + scale;
+        groupSub1[s1.sub1] = (groupSub1[s1.sub1] || 0) + scale;
+        groupSub2[row.sub2] = (groupSub2[row.sub2] || 0) + scale;
+
+        const scaleRatio = totalScale > 0 && scale ? ((scale / totalScale) * 100).toFixed(1) + "%" : "--";
+        const avgScale = scale && count ? (scale / count).toFixed(2) : "--";
+
+        const lockKey = `${mi}-${si}-${ri}`;
+        tr.innerHTML += `
+          <td><input class='editable' value='${row.sub2}' onblur='data[${mi}].subs[${si}].sub2s[${ri}].sub2=this.value; saveData(); renderTable()'></td>
+          <td><input type='text' value='${row.rate}' onblur='data[${mi}].subs[${si}].sub2s[${ri}].rate=this.value; saveData()'></td>
+          <td>
+            <input type='number' value='${row.scale}' ${row.scaleLocked ? "disabled class='locked'" : ""}
+              onblur='data[${mi}].subs[${si}].sub2s[${ri}].scale=this.value; saveData(); renderTable()'>
+            <span class='lock-toggle' onclick='data[${mi}].subs[${si}].sub2s[${ri}].scaleLocked = !data[${mi}].subs[${si}].sub2s[${ri}].scaleLocked; saveData(); renderTable()'>${row.scaleLocked ? "🔒" : "🔓"}</span>
+          </td>
+          <td>${scaleRatio}</td>
+          <td>
+            <input type='number' value='${row.count}' ${row.countLocked ? "disabled class='locked'" : ""}
+              onblur='data[${mi}].subs[${si}].sub2s[${ri}].count=this.value; saveData(); renderTable()'>
+            <span class='lock-toggle' onclick='data[${mi}].subs[${si}].sub2s[${ri}].countLocked = !data[${mi}].subs[${si}].sub2s[${ri}].countLocked; saveData(); renderTable()'>${row.countLocked ? "🔒" : "🔓"}</span>
+          </td>
+          <td>${avgScale}</td>
+          <td><button onclick='deleteRow(${mi},${si},${ri})'>🗑️</button></td>`;
+        tbody.appendChild(tr);
+      });
+    });
+  });
+
+  document.getElementById("total-scale").textContent = totalScale.toFixed(2);
+  document.getElementById("total-count").textContent = totalCount.toFixed(0);
+  document.getElementById("summary").innerHTML =
+    renderSummary("main", groupMain, totalScale) +
+    renderSummary("sub1", groupSub1, totalScale) +
+    renderSummary("sub2", groupSub2, totalScale);
+}
+
+function renderSummary(type, group, total) {
+  // 这里直接用 mainLabel 等变量，不要硬编码
+  const label = type === "main" ? mainLabel : type === "sub1" ? sub1Label : sub2Label;
+  let html = `<table class='summary-table'>
+  <thead><tr><th colspan='5'><b>按${label}统计</b></th></tr>
+  <tr><th></th><th>规模</th><th></th><th>占比</th><th></th></tr></thead><tbody>`;
+
+  for (let key in group) {
+    const val = group[key];
+    const ratioVal = total > 0 ? (val / total) * 100 : 0;
+    const lockKey = `${type}-${key}`;
+    const scaleLocked = summaryLocks[lockKey + "-scale"];
+    const ratioLocked = summaryLocks[lockKey + "-ratio"];
+
+    html += `<tr><td><b>${key}</b></td>
+      <td><input type="number" value="${val.toFixed(0)}" ${scaleLocked ? "disabled class='locked'" : ""}
+        onblur="if(!summaryLocks['${lockKey}-scale']) saveData();"></td>
+      <td><span class='lock-toggle' onclick="summaryLocks['${lockKey}-scale'] = !summaryLocks['${lockKey}-scale']; saveData(); renderTable();">${scaleLocked ? "🔒" : "🔓"}</span></td>
+      <td><input type="text" value="${ratioVal.toFixed(0)}%" ${ratioLocked ? "disabled class='locked'" : ""}
+        onblur="if(!summaryLocks['${lockKey}-ratio']) saveData();"></td>
+      <td><span class='lock-toggle' onclick="summaryLocks['${lockKey}-ratio'] = !summaryLocks['${lockKey}-ratio']; saveData(); renderTable();">${ratioLocked ? "🔒" : "🔓"}</span></td></tr>`;
+  }
+
+  html += `<tr><td><b>合计</b></td><td colspan="4"><b>${total.toFixed(0)}（100%）</b></td></tr></tbody></table>`;
+  return html;
+}
+
+function addMain() {
+  data.push({ main: "新主分类", subs: [{ sub1: "新子类一", sub2s: [createDataRow("开放式")] }] });
+  saveData();
+  renderTable();
+}
+function addSub1(mi) {
+  data[mi].subs.push({ sub1: "新子类一", sub2s: [createDataRow("开放式")] });
+  saveData();
+  renderTable();
+}
+function addSub2(mi, si) {
+  data[mi].subs[si].sub2s.push(createDataRow("新子类二"));
+  saveData();
+  renderTable();
+}
+function deleteRow(mi, si, ri) {
+  data[mi].subs[si].sub2s.splice(ri, 1);
+  if (data[mi].subs[si].sub2s.length === 0) data[mi].subs.splice(si, 1);
+  if (data[mi].subs.length === 0) data.splice(mi, 1);
+  saveData();
+  renderTable();
+}
+
+window.addEventListener("DOMContentLoaded", renderTable);
+</script>
+
+</body>
+</html>
