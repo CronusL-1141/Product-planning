@@ -61,12 +61,12 @@
 <div id="summary"></div>
 
 <script>
-let pageTitle = "2025年末目标 - 产品规划表";
-let mainLabel = "主分类";
-let sub1Label = "子类一";
-let sub2Label = "子类二";
-let summaryLocks = {};
-let data = loadData();
+var pageTitle = "2025年末目标 - 产品规划表";
+var mainLabel = "主分类";
+var sub1Label = "子类一";
+var sub2Label = "子类二";
+var summaryLocks = {};
+var data = loadData();
 
 const defaultData = [
   {
