@@ -505,8 +505,85 @@ function downloadExcel() {
     alert('无法加载导出库');
     return;
   }
-  const table = document.querySelector('table');
-  const wb = XLSX.utils.table_to_book(table, {sheet: 'Sheet1'});
+
+  let totalScale = 0,
+      totalCount = 0,
+      weightedSum = 0;
+  const groupMain = {}, groupSub1 = {}, groupSub2 = {}, groupSub2Bracket = {};
+
+  data.forEach(m => {
+    m.subs.forEach(s1 => {
+      s1.sub2s.forEach(row => {
+        const sc = parseFloat(row.scale) || 0;
+        const ct = parseFloat(row.count) || 0;
+        const rate = parseFloat(row.rate) || 0;
+        totalScale += sc;
+        totalCount += ct;
+        weightedSum += sc * rate;
+        const mainKey = baseName(m.main);
+        const sub1Key = baseName(s1.sub1);
+        const sub2Key = baseName(row.sub2);
+        groupMain[mainKey] = (groupMain[mainKey] || 0) + sc;
+        groupSub1[sub1Key] = (groupSub1[sub1Key] || 0) + sc;
+        groupSub2[sub2Key] = (groupSub2[sub2Key] || 0) + sc;
+        if (/[（(].*[）)]/.test(row.sub2)) {
+          groupSub2Bracket[row.sub2] = (groupSub2Bracket[row.sub2] || 0) + sc;
+        }
+      });
+    });
+  });
+
+  const weightedRateTotal = totalScale > 0 ? weightedSum / totalScale : 0;
+
+  const mainSheet = [
+    [mainLabel, sub1Label, sub2Label, '费率', '加权费率', '规模（亿元）', '占比', '只数', '单只规模']
+  ];
+  data.forEach(m => {
+    m.subs.forEach(s1 => {
+      s1.sub2s.forEach(row => {
+        const sc = parseFloat(row.scale) || 0;
+        const ct = parseFloat(row.count) || 0;
+        const rate = parseFloat(row.rate) || 0;
+        const scaleRatio = totalScale>0 && sc ? ((sc/totalScale)*100).toFixed(1)+'%' : '--';
+        const weightedRate = totalScale>0 && rate ? ((sc/totalScale)*rate).toFixed(2)+'%' : '--';
+        const avgScale = sc && ct ? (sc/ct).toFixed(2) : '--';
+        mainSheet.push([
+          m.main,
+          s1.sub1,
+          row.sub2,
+          row.rate,
+          weightedRate,
+          sc,
+          scaleRatio,
+          ct,
+          avgScale
+        ]);
+      });
+    });
+  });
+
+  mainSheet.push(['合计','', '', '', weightedRateTotal.toFixed(2)+'%', totalScale.toFixed(2),'100%', totalCount.toFixed(0),'']);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mainSheet), '主表');
+
+  function addSummarySheet(name, group){
+    const rows = [['分类','规模','占比']];
+    for(const key in group){
+      const val = group[key];
+      const ratio = totalScale>0 ? (val/totalScale*100).toFixed(0)+'%' : '0%';
+      rows.push([key, val.toFixed(0), ratio]);
+    }
+    rows.push(['合计', totalScale.toFixed(0), '100%']);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name);
+  }
+
+  addSummarySheet('按'+mainLabel+'统计', groupMain);
+  addSummarySheet('按'+sub1Label+'统计', groupSub1);
+  addSummarySheet('按'+sub2Label+'统计', groupSub2);
+  if(Object.keys(groupSub2Bracket).length>0){
+    addSummarySheet('按'+sub2Label+'(括号)统计', groupSub2Bracket);
+  }
+
   XLSX.writeFile(wb, 'planning.xlsx');
 }
 
@@ -556,18 +633,24 @@ function initParticles() {
 
   function step(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
-    particles.forEach(p=>{
+    for(let i=particles.length-1;i>=0;i--){
+      const p=particles[i];
       p.x+=p.vx; p.y+=p.vy;
-      if(p.x<0||p.x>canvas.width) p.vx*=-1;
-      if(p.y<0||p.y>canvas.height) p.vy*=-1;
+      let hit=false;
+      if(p.x<0||p.x>canvas.width){p.vx*=-1;hit=true;}
+      if(p.y<0||p.y>canvas.height){p.vy*=-1;hit=true;}
+      if(particles.length>150 && hit){
+        particles.splice(i,1);
+        continue;
+      }
       if(outsideBlocks(p.x,p.y)){
         ctx.fillStyle=p.color;
         ctx.beginPath();
         ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
         ctx.fill();
       }
-    });
-    particles.forEach(p=>{
+    }
+    for(const p of particles){
       const dist=Math.hypot(p.x-mouse.x,p.y-mouse.y);
       if(dist<100 && outsideBlocks(p.x,p.y) && outsideBlocks(mouse.x,mouse.y)){
         ctx.strokeStyle=`rgba(0,0,0,${Math.max(0,(100-dist)/100)})`;
@@ -577,7 +660,7 @@ function initParticles() {
         ctx.lineTo(mouse.x,mouse.y);
         ctx.stroke();
       }
-    });
+    }
     requestAnimationFrame(step);
   }
   step();
