@@ -69,12 +69,12 @@
       <td colspan="4">合计</td>
       <td id="total-weighted-rate">--</td>
       <td>
-        <input id="total-scale" type="number" onblur="totalScaleTarget=this.value; saveData();" />
+        <input id="total-scale" type="number" onblur="handleTotalBlur('scale')" />
         <span id="total-scale-lock" class="lock-toggle" onclick="toggleTotalLock('scale')">🔓</span>
       </td>
       <td>100%</td>
       <td>
-        <input id="total-count" type="number" onblur="totalCountTarget=this.value; saveData();" />
+        <input id="total-count" type="number" onblur="handleTotalBlur('count')" />
         <span id="total-count-lock" class="lock-toggle" onclick="toggleTotalLock('count')">🔓</span>
       </td>
       <td>--</td>
@@ -294,8 +294,16 @@ function renderTable() {
   const scaleInput = document.getElementById("total-scale");
   const countInput = document.getElementById("total-count");
   document.getElementById("total-weighted-rate").textContent = totalScale > 0 ? weightedRateTotal.toFixed(2) + "%" : "--";
-  scaleInput.value = totalScaleTarget != null ? totalScaleTarget : totalScale.toFixed(2);
-  countInput.value = totalCountTarget != null ? totalCountTarget : totalCount.toFixed(0);
+  if (totalScaleLocked) {
+    scaleInput.value = totalScaleTarget != null ? totalScaleTarget : totalScale.toFixed(2);
+  } else {
+    scaleInput.value = totalScale.toFixed(2);
+  }
+  if (totalCountLocked) {
+    countInput.value = totalCountTarget != null ? totalCountTarget : totalCount.toFixed(0);
+  } else {
+    countInput.value = totalCount.toFixed(0);
+  }
   scaleInput.disabled = totalScaleLocked;
   countInput.disabled = totalCountLocked;
   document.getElementById("total-scale-lock").textContent = totalScaleLocked ? "🔒" : "🔓";
@@ -389,11 +397,46 @@ function deleteRow(mi, si, ri) {
 function toggleTotalLock(type) {
   if (type === 'scale') {
     totalScaleLocked = !totalScaleLocked;
+    if (totalScaleLocked) {
+      totalScaleTarget = parseFloat(document.getElementById('total-scale').value) || 0;
+    } else {
+      totalScaleTarget = null;
+    }
   } else {
     totalCountLocked = !totalCountLocked;
+    if (totalCountLocked) {
+      totalCountTarget = parseFloat(document.getElementById('total-count').value) || 0;
+    } else {
+      totalCountTarget = null;
+    }
   }
   saveData();
-  renderTable();
+  if (totalScaleLocked || totalCountLocked) autoFill();
+  else renderTable();
+}
+
+function handleTotalBlur(type) {
+  if (type === 'scale') {
+    if (totalScaleLocked) {
+      totalScaleTarget = parseFloat(document.getElementById('total-scale').value) || 0;
+      saveData();
+      autoFill();
+    } else {
+      totalScaleTarget = null;
+      saveData();
+      renderTable();
+    }
+  } else {
+    if (totalCountLocked) {
+      totalCountTarget = parseFloat(document.getElementById('total-count').value) || 0;
+      saveData();
+      autoFill();
+    } else {
+      totalCountTarget = null;
+      saveData();
+      renderTable();
+    }
+  }
 }
 
 function autoFill() {
@@ -472,6 +515,15 @@ function autoFill() {
   if (countEmpty.length > 0) {
     const per = Math.max(targetCountAvail - sumCountWithVal * countFactor, 0) / countEmpty.length;
     countEmpty.forEach(r => { r.count = Math.round(per); });
+  }
+  let currentTotal = lockedCount + countWithVal.reduce((s,r)=>s+r.count,0) + countEmpty.reduce((s,r)=>s+r.count,0);
+  let diff = targetCount - currentTotal;
+  const adjustList = countWithVal.concat(countEmpty);
+  let i = 0;
+  while (diff !== 0 && adjustList.length > 0) {
+    adjustList[i % adjustList.length].count += diff > 0 ? 1 : -1;
+    diff += diff > 0 ? -1 : 1;
+    i++;
   }
 
   saveData();
