@@ -29,7 +29,10 @@
     button.add-btn { font-size: 12px; margin: 2px; }
     tfoot td { font-weight: bold; background-color: #f8f8f8; }
     .summary-table {
+      display: inline-block;
+      vertical-align: top;
       margin-top: 40px;
+      margin-right: 10px;
       width: 300px;
       border: 1px solid #aaa;
     }
@@ -43,6 +46,7 @@
 
 <h2 id="page-title" contenteditable="true" onblur="updateTitle()">2025年末目标 - 产品规划表</h2>
 <button onclick="addMain()">➕ 新主分类</button>
+<button id="auto-fill-btn" style="float:right" onclick="autoFill()">自动填充</button>
 <table>
   <thead id="table-header"></thead>
   <tbody id="table-body"></tbody>
@@ -67,6 +71,7 @@ var mainLabel = "主分类";
 var sub1Label = "子类一";
 var sub2Label = "子类二";
 var summaryLocks = {};
+var summaryRatioTargets = {};
 var totalScaleTarget = null;
 var totalCountTarget = null;
 var data = loadData();
@@ -110,6 +115,7 @@ function saveData() {
     sub1Label,
     sub2Label,
     summaryLocks,
+    summaryRatioTargets,
     totalScaleTarget,
     totalCountTarget
   }));
@@ -125,6 +131,7 @@ function loadData() {
     sub1Label = obj.sub1Label || sub1Label;
     sub2Label = obj.sub2Label || sub2Label;
     summaryLocks = obj.summaryLocks || {};
+    summaryRatioTargets = obj.summaryRatioTargets || {};
     totalScaleTarget = obj.totalScaleTarget != null ? obj.totalScaleTarget : null;
     totalCountTarget = obj.totalCountTarget != null ? obj.totalCountTarget : null;
     return obj.data || defaultData;
@@ -256,26 +263,25 @@ function renderSummary(type, group, total) {
   // 这里直接用 mainLabel 等变量，不要硬编码
   const label = type === "main" ? mainLabel : type === "sub1" ? sub1Label : sub2Label;
   let html = `<table class='summary-table'>
-  <thead><tr><th colspan='5'><b>按${label}统计</b></th></tr>
-  <tr><th></th><th>规模</th><th></th><th>占比</th><th></th></tr></thead><tbody>`;
+  <thead><tr><th colspan='4'><b>按${label}统计</b></th></tr>
+  <tr><th></th><th>规模</th><th>占比</th><th></th></tr></thead><tbody>`;
 
   for (let key in group) {
     const val = group[key];
     const ratioVal = total > 0 ? (val / total) * 100 : 0;
     const lockKey = `${type}-${key}`;
-    const scaleLocked = summaryLocks[lockKey + "-scale"];
     const ratioLocked = summaryLocks[lockKey + "-ratio"];
+    const ratioTarget = summaryRatioTargets[lockKey];
+    const displayRatio = ratioLocked && ratioTarget != null ? ratioTarget : ratioVal.toFixed(0);
 
     html += `<tr><td><b>${key}</b></td>
-      <td><input type="number" value="${val.toFixed(0)}" ${scaleLocked ? "disabled class='locked'" : ""}
-        onblur="if(!summaryLocks['${lockKey}-scale']) saveData();"></td>
-      <td><span class='lock-toggle' onclick="summaryLocks['${lockKey}-scale'] = !summaryLocks['${lockKey}-scale']; saveData(); renderTable();">${scaleLocked ? "🔒" : "🔓"}</span></td>
-      <td><input type="text" value="${ratioVal.toFixed(0)}%" ${ratioLocked ? "disabled class='locked'" : ""}
-        onblur="if(!summaryLocks['${lockKey}-ratio']) saveData();"></td>
+      <td>${val.toFixed(0)}</td>
+      <td><input type="text" value="${displayRatio}%" ${ratioLocked ? "disabled class='locked'" : ""}
+        onblur="summaryRatioTargets['${lockKey}']=parseFloat(this.value); saveData();"></td>
       <td><span class='lock-toggle' onclick="summaryLocks['${lockKey}-ratio'] = !summaryLocks['${lockKey}-ratio']; saveData(); renderTable();">${ratioLocked ? "🔒" : "🔓"}</span></td></tr>`;
   }
 
-  html += `<tr><td><b>合计</b></td><td colspan="4"><b>${total.toFixed(0)}（100%）</b></td></tr></tbody></table>`;
+  html += `<tr><td><b>合计</b></td><td colspan="3"><b>${total.toFixed(0)}（100%）</b></td></tr></tbody></table>`;
   return html;
 }
 
@@ -298,6 +304,87 @@ function deleteRow(mi, si, ri) {
   data[mi].subs[si].sub2s.splice(ri, 1);
   if (data[mi].subs[si].sub2s.length === 0) data[mi].subs.splice(si, 1);
   if (data[mi].subs.length === 0) data.splice(mi, 1);
+  saveData();
+  renderTable();
+}
+
+function autoFill() {
+  // gather totals and group info
+  let totalScale = 0,
+      totalCount = 0;
+  const groups = {};
+
+  data.forEach((m, mi) => {
+    groups[m.main] = groups[m.main] || {rows: [], lockedScale: 0, currentScale:0};
+    m.subs.forEach((s1, si) => {
+      s1.sub2s.forEach((row, ri) => {
+        const scale = parseFloat(row.scale) || 0;
+        const count = parseFloat(row.count) || 0;
+        totalScale += scale;
+        totalCount += count;
+        const info = {row, scale, count};
+        groups[m.main].rows.push(info);
+        groups[m.main].currentScale += scale;
+        if (row.scaleLocked) groups[m.main].lockedScale += scale;
+      });
+    });
+  });
+
+  const targetScale = parseFloat(document.getElementById('total-scale').value) || totalScale;
+  const targetCount = parseFloat(document.getElementById('total-count').value) || totalCount;
+
+  // adjust scales within each main group according to locked ratios
+  for (const key in groups) {
+    const g = groups[key];
+    const lockKey = `main-${key}`;
+    const ratioLocked = summaryLocks[lockKey + '-ratio'];
+    const ratioTarget = ratioLocked ? parseFloat(summaryRatioTargets[lockKey]) || 0 : (g.currentScale/totalScale*100);
+    const targetGroupScale = targetScale * ratioTarget / 100;
+
+    let unlocked = g.rows.filter(r => !r.row.scaleLocked);
+    const withVal = unlocked.filter(r => r.row.scale);
+    const empty = unlocked.filter(r => !r.row.scale);
+    let remain = Math.max(targetGroupScale - g.lockedScale, 0);
+    const sumWith = withVal.reduce((s, r) => s + (parseFloat(r.row.scale) || 0), 0);
+    const factor = sumWith > 0 ? remain / sumWith : 0;
+    withVal.forEach(r => { r.row.scale = +(parseFloat(r.row.scale) * factor).toFixed(2); remain -= parseFloat(r.row.scale); });
+    if (empty.length > 0) {
+      const per = remain / empty.length;
+      empty.forEach(r => { r.row.scale = +per.toFixed(2); });
+    }
+  }
+
+  // recompute totals after scale adjustments for count distribution
+  totalScale = 0;
+  totalCount = 0;
+  let lockedCount = 0;
+  const countWithVal = [];
+  const countEmpty = [];
+  data.forEach(m => {
+    m.subs.forEach(s1 => {
+      s1.sub2s.forEach(row => {
+        const sc = parseFloat(row.scale) || 0;
+        const ct = parseFloat(row.count) || 0;
+        totalScale += sc;
+        totalCount += ct;
+        if (row.countLocked) {
+          lockedCount += ct;
+        } else {
+          if (ct) countWithVal.push(row); else countEmpty.push(row);
+        }
+      });
+    });
+  });
+
+  const targetCountAvail = targetCount - lockedCount;
+  const sumCountWithVal = countWithVal.reduce((s, r) => s + (parseFloat(r.count) || 0), 0);
+  const countFactor = sumCountWithVal > 0 ? targetCountAvail / sumCountWithVal : 0;
+  countWithVal.forEach(r => { r.count = Math.round((parseFloat(r.count) || 0) * countFactor); });
+  if (countEmpty.length > 0) {
+    const per = Math.max(targetCountAvail - sumCountWithVal * countFactor, 0) / countEmpty.length;
+    countEmpty.forEach(r => { r.count = Math.round(per); });
+  }
+
   saveData();
   renderTable();
 }
