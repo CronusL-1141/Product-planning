@@ -601,6 +601,7 @@ function initParticles() {
     blocks = Array.from(document.querySelectorAll('#header,#content')).map(el=>el.getBoundingClientRect());
   }
   window.addEventListener('resize', resize);
+  window.addEventListener('scroll', resize, {passive:true});
   resize();
 
   const baseR = 3;
