@@ -4,7 +4,13 @@
   <meta charset="UTF-8" />
   <title>产品规划静态原型</title>
   <style>
-    body { font-family: sans-serif; }
+    body { font-family: sans-serif; margin:0; }
+    #header { position: relative; text-align: center; margin-top: 10px; }
+    #logo { display:block; margin:0 auto; width:300px; }
+    #mascot { position:absolute; right:10px; top:50%; transform:translateY(-50%); width:100px; }
+    #page-title { text-align:center; margin-top:10px; }
+    #content { max-width:1200px; margin:20px auto; padding:10px; }
+    #particle-canvas { position:fixed; top:0; left:0; width:100%; height:100%; z-index:-1; pointer-events:none; }
     table { width: 100%; border-collapse: collapse; margin-top: 20px; }
     th, td {
       border: 1px solid #ccc;
@@ -28,8 +34,11 @@
     .lock-toggle { cursor: pointer; }
     button.add-btn { font-size: 12px; margin: 2px; }
     tfoot td { font-weight: bold; background-color: #f8f8f8; }
+    #summary { text-align:center; }
     .summary-table {
-      margin-top: 40px;
+      display: inline-block;
+      vertical-align: top;
+      margin: 40px 20px 0;
       width: 300px;
       border: 1px solid #aaa;
     }
@@ -41,17 +50,33 @@
 </head>
 <body>
 
-<h2 id="page-title" contenteditable="true" onblur="updateTitle()">2025年末目标 - 产品规划表</h2>
+<canvas id="particle-canvas"></canvas>
+<div id="header">
+  <img id="logo" src="LOGO.jpg" alt="LOGO">
+  <video id="mascot" src="元宝.mp4" autoplay loop muted></video>
+  <h2 id="page-title" contenteditable="true" onblur="updateTitle()">2025年末目标 - 产品规划表</h2>
+</div>
+<div id="content">
 <button onclick="addMain()">➕ 新主分类</button>
+<button id="download-btn" style="float:right" onclick="downloadExcel()">下载</button>
+<button id="undo-btn" style="float:right" onclick="undoData()">回退</button>
+<button id="auto-fill-btn" style="float:right" onclick="autoFill()">自动填充</button>
 <table>
   <thead id="table-header"></thead>
   <tbody id="table-body"></tbody>
   <tfoot>
     <tr>
       <td colspan="4">合计</td>
-      <td id="total-scale">0</td>
+      <td id="total-weighted-rate">--</td>
+      <td>
+        <input id="total-scale" type="number" onblur="handleTotalBlur('scale')" />
+        <span id="total-scale-lock" class="lock-toggle" onclick="toggleTotalLock('scale')">🔓</span>
+      </td>
       <td>100%</td>
-      <td id="total-count">0</td>
+      <td>
+        <input id="total-count" type="number" onblur="handleTotalBlur('count')" />
+        <span id="total-count-lock" class="lock-toggle" onclick="toggleTotalLock('count')">🔓</span>
+      </td>
       <td>--</td>
       <td></td>
     </tr>
@@ -59,14 +84,21 @@
 </table>
 
 <div id="summary"></div>
+</div>
 
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
-let pageTitle = "2025年末目标 - 产品规划表";
-let mainLabel = "主分类";
-let sub1Label = "子类一";
-let sub2Label = "子类二";
-let summaryLocks = {};
-let data = loadData();
+var pageTitle = "2025年末目标 - 产品规划表";
+var mainLabel = "主分类";
+var sub1Label = "子类一";
+var sub2Label = "子类二";
+var summaryLocks = {};
+var summaryRatioTargets = {};
+var totalScaleTarget = null;
+var totalCountTarget = null;
+var totalScaleLocked = false;
+var totalCountLocked = false;
+var data = loadData();
 
 const defaultData = [
   {
@@ -87,6 +119,10 @@ function createDataRow(sub2) {
   return { sub2, rate: "", scale: "", count: "", scaleLocked: false, countLocked: false };
 }
 
+function baseName(name) {
+  return name.replace(/[（(][^）)]*[）)]/g, "").trim();
+}
+
 function updateTitle() {
   pageTitle = document.getElementById("page-title").textContent.trim();
   saveData();
@@ -99,10 +135,25 @@ function updateHeader(th, labelVar) {
 }
 
 
-function saveData() {
-  localStorage.setItem("productPlanningData", JSON.stringify({
-    data, pageTitle, mainLabel, sub1Label, sub2Label, summaryLocks
-  }));
+function saveData(skipBackup) {
+  const current = JSON.stringify({
+    data,
+    pageTitle,
+    mainLabel,
+    sub1Label,
+    sub2Label,
+    summaryLocks,
+    summaryRatioTargets,
+    totalScaleTarget,
+    totalCountTarget,
+    totalScaleLocked,
+    totalCountLocked
+  });
+  if (!skipBackup) {
+    const prev = localStorage.getItem("productPlanningData");
+    if (prev !== null) localStorage.setItem("productPlanningPrev", prev);
+  }
+  localStorage.setItem("productPlanningData", current);
 }
 
 function loadData() {
@@ -115,6 +166,11 @@ function loadData() {
     sub1Label = obj.sub1Label || sub1Label;
     sub2Label = obj.sub2Label || sub2Label;
     summaryLocks = obj.summaryLocks || {};
+    summaryRatioTargets = obj.summaryRatioTargets || {};
+    totalScaleTarget = obj.totalScaleTarget != null ? obj.totalScaleTarget : null;
+    totalCountTarget = obj.totalCountTarget != null ? obj.totalCountTarget : null;
+    totalScaleLocked = obj.totalScaleLocked || false;
+    totalCountLocked = obj.totalCountLocked || false;
     return obj.data || defaultData;
   } catch {
     return JSON.parse(JSON.stringify(defaultData));
@@ -140,7 +196,7 @@ function renderHeader() {
     };
     tr.appendChild(th);
   });
-  ["费率", "规模（亿元）", "占比", "只数", "单只规模", "操作"].forEach(text => {
+  ["费率", "加权费率", "规模（亿元）", "占比", "只数", "单只规模", "操作"].forEach(text => {
     const th = document.createElement("th");
     th.textContent = text;
     tr.appendChild(th);
@@ -154,9 +210,37 @@ function renderTable() {
   const tbody = document.getElementById("table-body");
   tbody.innerHTML = "";
 
-  let totalScale = 0, totalCount = 0;
-  let groupMain = {}, groupSub1 = {}, groupSub2 = {};
+  let totalScale = 0,
+      totalCount = 0,
+      weightedSum = 0;
+  let groupMain = {}, groupSub1 = {}, groupSub2 = {}, groupSub2Bracket = {};
 
+  // first pass to gather totals
+  data.forEach(m => {
+    m.subs.forEach(s1 => {
+      s1.sub2s.forEach(row => {
+        const scale = parseFloat(row.scale) || 0;
+        const count = parseFloat(row.count) || 0;
+        const rate = parseFloat(row.rate) || 0;
+        totalScale += scale;
+        totalCount += count;
+        weightedSum += scale * rate;
+        const mainKey = baseName(m.main);
+        const sub1Key = baseName(s1.sub1);
+        const sub2Key = baseName(row.sub2);
+        groupMain[mainKey] = (groupMain[mainKey] || 0) + scale;
+        groupSub1[sub1Key] = (groupSub1[sub1Key] || 0) + scale;
+        groupSub2[sub2Key] = (groupSub2[sub2Key] || 0) + scale;
+        if (/[（(].*[）)]/.test(row.sub2)) {
+          groupSub2Bracket[row.sub2] = (groupSub2Bracket[row.sub2] || 0) + scale;
+        }
+      });
+    });
+  });
+
+  const weightedRateTotal = totalScale > 0 ? weightedSum / totalScale : 0;
+
+  // build table rows
   data.forEach((m, mi) => {
     m.subs.forEach((s1, si) => {
       s1.sub2s.forEach((row, ri) => {
@@ -179,28 +263,25 @@ function renderTable() {
 
         const scale = parseFloat(row.scale) || 0;
         const count = parseFloat(row.count) || 0;
-        totalScale += scale;
-        totalCount += count;
-        groupMain[m.main] = (groupMain[m.main] || 0) + scale;
-        groupSub1[s1.sub1] = (groupSub1[s1.sub1] || 0) + scale;
-        groupSub2[row.sub2] = (groupSub2[row.sub2] || 0) + scale;
-
+        const rate = parseFloat(row.rate) || 0;
         const scaleRatio = totalScale > 0 && scale ? ((scale / totalScale) * 100).toFixed(1) + "%" : "--";
+        const weightedRate = totalScale > 0 && rate ? ((scale / totalScale) * rate).toFixed(2) + "%" : "--";
         const avgScale = scale && count ? (scale / count).toFixed(2) : "--";
 
         const lockKey = `${mi}-${si}-${ri}`;
         tr.innerHTML += `
           <td><input class='editable' value='${row.sub2}' onblur='data[${mi}].subs[${si}].sub2s[${ri}].sub2=this.value; saveData(); renderTable()'></td>
           <td><input type='text' value='${row.rate}' onblur='data[${mi}].subs[${si}].sub2s[${ri}].rate=this.value; saveData()'></td>
+          <td>${weightedRate}</td>
           <td>
             <input type='number' value='${row.scale}' ${row.scaleLocked ? "disabled class='locked'" : ""}
-              onblur='data[${mi}].subs[${si}].sub2s[${ri}].scale=this.value; saveData(); renderTable()'>
+              onblur='updateScale(${mi},${si},${ri}, this.value)'>
             <span class='lock-toggle' onclick='data[${mi}].subs[${si}].sub2s[${ri}].scaleLocked = !data[${mi}].subs[${si}].sub2s[${ri}].scaleLocked; saveData(); renderTable()'>${row.scaleLocked ? "🔒" : "🔓"}</span>
           </td>
           <td>${scaleRatio}</td>
           <td>
             <input type='number' value='${row.count}' ${row.countLocked ? "disabled class='locked'" : ""}
-              onblur='data[${mi}].subs[${si}].sub2s[${ri}].count=this.value; saveData(); renderTable()'>
+              onblur='updateCount(${mi},${si},${ri}, this.value)'>
             <span class='lock-toggle' onclick='data[${mi}].subs[${si}].sub2s[${ri}].countLocked = !data[${mi}].subs[${si}].sub2s[${ri}].countLocked; saveData(); renderTable()'>${row.countLocked ? "🔒" : "🔓"}</span>
           </td>
           <td>${avgScale}</td>
@@ -210,38 +291,69 @@ function renderTable() {
     });
   });
 
-  document.getElementById("total-scale").textContent = totalScale.toFixed(2);
-  document.getElementById("total-count").textContent = totalCount.toFixed(0);
+  const scaleInput = document.getElementById("total-scale");
+  const countInput = document.getElementById("total-count");
+  document.getElementById("total-weighted-rate").textContent = totalScale > 0 ? weightedRateTotal.toFixed(2) + "%" : "--";
+  if (totalScaleLocked) {
+    scaleInput.value = totalScaleTarget != null ? totalScaleTarget : totalScale.toFixed(2);
+  } else {
+    scaleInput.value = totalScale.toFixed(2);
+  }
+  if (totalCountLocked) {
+    countInput.value = totalCountTarget != null ? totalCountTarget : totalCount.toFixed(0);
+  } else {
+    countInput.value = totalCount.toFixed(0);
+  }
+  scaleInput.disabled = totalScaleLocked;
+  countInput.disabled = totalCountLocked;
+  document.getElementById("total-scale-lock").textContent = totalScaleLocked ? "🔒" : "🔓";
+  document.getElementById("total-count-lock").textContent = totalCountLocked ? "🔒" : "🔓";
+
+  const extraTable = Object.keys(groupSub2Bracket).length > 0 ? renderBracketSummary(groupSub2Bracket, totalScale) : "";
   document.getElementById("summary").innerHTML =
     renderSummary("main", groupMain, totalScale) +
     renderSummary("sub1", groupSub1, totalScale) +
-    renderSummary("sub2", groupSub2, totalScale);
+    renderSummary("sub2", groupSub2, totalScale) +
+    extraTable;
 }
 
 function renderSummary(type, group, total) {
   // 这里直接用 mainLabel 等变量，不要硬编码
   const label = type === "main" ? mainLabel : type === "sub1" ? sub1Label : sub2Label;
   let html = `<table class='summary-table'>
-  <thead><tr><th colspan='5'><b>按${label}统计</b></th></tr>
-  <tr><th></th><th>规模</th><th></th><th>占比</th><th></th></tr></thead><tbody>`;
+  <thead><tr><th colspan='4'><b>按${label}统计</b></th></tr>
+  <tr><th></th><th>规模</th><th>占比</th><th></th></tr></thead><tbody>`;
 
   for (let key in group) {
     const val = group[key];
     const ratioVal = total > 0 ? (val / total) * 100 : 0;
     const lockKey = `${type}-${key}`;
-    const scaleLocked = summaryLocks[lockKey + "-scale"];
     const ratioLocked = summaryLocks[lockKey + "-ratio"];
+    const ratioTarget = summaryRatioTargets[lockKey];
+    const displayRatio = ratioLocked && ratioTarget != null ? ratioTarget : ratioVal.toFixed(0);
 
     html += `<tr><td><b>${key}</b></td>
-      <td><input type="number" value="${val.toFixed(0)}" ${scaleLocked ? "disabled class='locked'" : ""}
-        onblur="if(!summaryLocks['${lockKey}-scale']) saveData();"></td>
-      <td><span class='lock-toggle' onclick="summaryLocks['${lockKey}-scale'] = !summaryLocks['${lockKey}-scale']; saveData(); renderTable();">${scaleLocked ? "🔒" : "🔓"}</span></td>
-      <td><input type="text" value="${ratioVal.toFixed(0)}%" ${ratioLocked ? "disabled class='locked'" : ""}
-        onblur="if(!summaryLocks['${lockKey}-ratio']) saveData();"></td>
+      <td>${val.toFixed(0)}</td>
+      <td><input type="text" value="${displayRatio}%" ${ratioLocked ? "disabled class='locked'" : ""}
+        onblur="summaryRatioTargets['${lockKey}']=parseFloat(this.value); saveData();"></td>
       <td><span class='lock-toggle' onclick="summaryLocks['${lockKey}-ratio'] = !summaryLocks['${lockKey}-ratio']; saveData(); renderTable();">${ratioLocked ? "🔒" : "🔓"}</span></td></tr>`;
   }
 
-  html += `<tr><td><b>合计</b></td><td colspan="4"><b>${total.toFixed(0)}（100%）</b></td></tr></tbody></table>`;
+  html += `<tr><td><b>合计</b></td><td colspan="3"><b>${total.toFixed(0)}（100%）</b></td></tr></tbody></table>`;
+  return html;
+}
+
+function renderBracketSummary(group, total) {
+  let html = `<table class='summary-table'>
+  <thead><tr><th colspan='3'><b>按${sub2Label}（括号）统计</b></th></tr>
+  <tr><th></th><th>规模</th><th>占比</th></tr></thead><tbody>`;
+
+  for (let key in group) {
+    const val = group[key];
+    const ratioVal = total > 0 ? (val / total) * 100 : 0;
+    html += `<tr><td><b>${key}</b></td><td>${val.toFixed(0)}</td><td>${ratioVal.toFixed(0)}%</td></tr>`;
+  }
+  html += `<tr><td><b>合计</b></td><td colspan="2"><b>${total.toFixed(0)}（100%）</b></td></tr></tbody></table>`;
   return html;
 }
 
@@ -260,6 +372,20 @@ function addSub2(mi, si) {
   saveData();
   renderTable();
 }
+
+function updateScale(mi, si, ri, val) {
+  data[mi].subs[si].sub2s[ri].scale = val;
+  saveData();
+  if (totalScaleLocked || totalCountLocked) autoFill({skipScale:`${mi}-${si}-${ri}`});
+  else renderTable();
+}
+
+function updateCount(mi, si, ri, val) {
+  data[mi].subs[si].sub2s[ri].count = val;
+  saveData();
+  if (totalScaleLocked || totalCountLocked) autoFill({skipCount:`${mi}-${si}-${ri}`});
+  else renderTable();
+}
 function deleteRow(mi, si, ri) {
   data[mi].subs[si].sub2s.splice(ri, 1);
   if (data[mi].subs[si].sub2s.length === 0) data[mi].subs.splice(si, 1);
@@ -268,7 +394,337 @@ function deleteRow(mi, si, ri) {
   renderTable();
 }
 
-window.addEventListener("DOMContentLoaded", renderTable);
+function toggleTotalLock(type) {
+  if (type === 'scale') {
+    totalScaleLocked = !totalScaleLocked;
+    if (totalScaleLocked) {
+      totalScaleTarget = parseFloat(document.getElementById('total-scale').value) || 0;
+    } else {
+      totalScaleTarget = null;
+    }
+  } else {
+    totalCountLocked = !totalCountLocked;
+    if (totalCountLocked) {
+      totalCountTarget = parseFloat(document.getElementById('total-count').value) || 0;
+    } else {
+      totalCountTarget = null;
+    }
+  }
+  saveData();
+  if (totalScaleLocked || totalCountLocked) autoFill();
+  else renderTable();
+}
+
+function handleTotalBlur(type) {
+  if (type === 'scale') {
+    if (totalScaleLocked) {
+      totalScaleTarget = parseFloat(document.getElementById('total-scale').value) || 0;
+      saveData();
+      autoFill();
+    } else {
+      totalScaleTarget = null;
+      saveData();
+      renderTable();
+    }
+  } else {
+    if (totalCountLocked) {
+      totalCountTarget = parseFloat(document.getElementById('total-count').value) || 0;
+      saveData();
+      autoFill();
+    } else {
+      totalCountTarget = null;
+      saveData();
+      renderTable();
+    }
+  }
+}
+
+function autoFill(opts = {}) {
+  // gather totals and group info
+  let totalScale = 0,
+      totalCount = 0;
+  const groups = {};
+
+  data.forEach((m, mi) => {
+    const mainKey = baseName(m.main);
+    groups[mainKey] = groups[mainKey] || {rows: [], lockedScale: 0, currentScale:0};
+    m.subs.forEach((s1, si) => {
+      s1.sub2s.forEach((row, ri) => {
+        const rowKey = `${mi}-${si}-${ri}`;
+        const scale = parseFloat(row.scale) || 0;
+        const count = parseFloat(row.count) || 0;
+        totalScale += scale;
+        totalCount += count;
+        const info = {row, scale, count, key: rowKey};
+        groups[mainKey].rows.push(info);
+        groups[mainKey].currentScale += scale;
+        if (row.scaleLocked || opts.skipScale === rowKey) groups[mainKey].lockedScale += scale;
+      });
+    });
+  });
+
+  const targetScale = parseFloat(document.getElementById('total-scale').value) || totalScale;
+  const targetCount = parseFloat(document.getElementById('total-count').value) || totalCount;
+
+  // adjust scales within each main group according to locked ratios
+  for (const key in groups) {
+    const g = groups[key];
+    const lockKey = `main-${key}`;
+    const ratioLocked = summaryLocks[lockKey + '-ratio'];
+    const ratioTarget = ratioLocked ? parseFloat(summaryRatioTargets[lockKey]) || 0 : (g.currentScale/totalScale*100);
+    const targetGroupScale = targetScale * ratioTarget / 100;
+
+    let unlocked = g.rows.filter(r => !r.row.scaleLocked && r.key !== opts.skipScale);
+    const withVal = unlocked.filter(r => r.row.scale);
+    const empty = unlocked.filter(r => !r.row.scale);
+    let remain = Math.max(targetGroupScale - g.lockedScale, 0);
+    const sumWith = withVal.reduce((s, r) => s + (parseFloat(r.row.scale) || 0), 0);
+    const factor = sumWith > 0 ? remain / sumWith : 0;
+    withVal.forEach(r => { r.row.scale = +(parseFloat(r.row.scale) * factor).toFixed(2); remain -= parseFloat(r.row.scale); });
+    if (empty.length > 0) {
+      const per = remain / empty.length;
+      empty.forEach(r => { r.row.scale = +per.toFixed(2); });
+    }
+  }
+
+  // recompute totals after scale adjustments for count distribution
+  totalScale = 0;
+  totalCount = 0;
+  let lockedCount = 0;
+  const countWithVal = [];
+  const countEmpty = [];
+  data.forEach((m, mi) => {
+    m.subs.forEach((s1, si) => {
+      s1.sub2s.forEach((row, ri) => {
+        const rowKey = `${mi}-${si}-${ri}`;
+        const sc = parseFloat(row.scale) || 0;
+        const ct = parseFloat(row.count) || 0;
+        totalScale += sc;
+        totalCount += ct;
+        if (row.countLocked || opts.skipCount === rowKey) {
+          lockedCount += ct;
+        } else {
+          if (ct) countWithVal.push({row, key: rowKey}); else countEmpty.push({row, key: rowKey});
+        }
+      });
+    });
+  });
+
+  const targetCountAvail = targetCount - lockedCount;
+  const sumCountWithVal = countWithVal.reduce((s, r) => s + (parseFloat(r.row.count) || 0), 0);
+  const countFactor = sumCountWithVal > 0 ? targetCountAvail / sumCountWithVal : 0;
+  countWithVal.forEach(r => { r.row.count = Math.round((parseFloat(r.row.count) || 0) * countFactor); });
+  if (countEmpty.length > 0) {
+    const per = Math.max(targetCountAvail - sumCountWithVal * countFactor, 0) / countEmpty.length;
+    countEmpty.forEach(r => { r.row.count = Math.round(per); });
+  }
+  let currentTotal = lockedCount + countWithVal.reduce((s,r)=>s+r.row.count,0) + countEmpty.reduce((s,r)=>s+r.row.count,0);
+  let diff = targetCount - currentTotal;
+  const adjustList = countWithVal.concat(countEmpty);
+  let i = 0;
+  while (diff !== 0 && adjustList.length > 0) {
+    adjustList[i % adjustList.length].row.count += diff > 0 ? 1 : -1;
+    diff += diff > 0 ? -1 : 1;
+    i++;
+  }
+
+  saveData();
+  renderTable();
+}
+
+function undoData() {
+  const prev = localStorage.getItem('productPlanningPrev');
+  if (!prev) {
+    alert('没有可回退的数据');
+    return;
+  }
+  const obj = JSON.parse(prev);
+  data = obj.data || [];
+  pageTitle = obj.pageTitle || pageTitle;
+  mainLabel = obj.mainLabel || mainLabel;
+  sub1Label = obj.sub1Label || sub1Label;
+  sub2Label = obj.sub2Label || sub2Label;
+  summaryLocks = obj.summaryLocks || {};
+  summaryRatioTargets = obj.summaryRatioTargets || {};
+  totalScaleTarget = obj.totalScaleTarget;
+  totalCountTarget = obj.totalCountTarget;
+  totalScaleLocked = obj.totalScaleLocked || false;
+  totalCountLocked = obj.totalCountLocked || false;
+  saveData(true);
+  renderTable();
+}
+
+function downloadExcel() {
+  if (typeof XLSX === 'undefined') {
+    alert('无法加载导出库');
+    return;
+  }
+
+  let totalScale = 0,
+      totalCount = 0,
+      weightedSum = 0;
+  const groupMain = {}, groupSub1 = {}, groupSub2 = {}, groupSub2Bracket = {};
+
+  data.forEach(m => {
+    m.subs.forEach(s1 => {
+      s1.sub2s.forEach(row => {
+        const sc = parseFloat(row.scale) || 0;
+        const ct = parseFloat(row.count) || 0;
+        const rate = parseFloat(row.rate) || 0;
+        totalScale += sc;
+        totalCount += ct;
+        weightedSum += sc * rate;
+        const mainKey = baseName(m.main);
+        const sub1Key = baseName(s1.sub1);
+        const sub2Key = baseName(row.sub2);
+        groupMain[mainKey] = (groupMain[mainKey] || 0) + sc;
+        groupSub1[sub1Key] = (groupSub1[sub1Key] || 0) + sc;
+        groupSub2[sub2Key] = (groupSub2[sub2Key] || 0) + sc;
+        if (/[（(].*[）)]/.test(row.sub2)) {
+          groupSub2Bracket[row.sub2] = (groupSub2Bracket[row.sub2] || 0) + sc;
+        }
+      });
+    });
+  });
+
+  const weightedRateTotal = totalScale > 0 ? weightedSum / totalScale : 0;
+
+  const mainSheet = [
+    [mainLabel, sub1Label, sub2Label, '费率', '加权费率', '规模（亿元）', '占比', '只数', '单只规模']
+  ];
+  data.forEach(m => {
+    m.subs.forEach(s1 => {
+      s1.sub2s.forEach(row => {
+        const sc = parseFloat(row.scale) || 0;
+        const ct = parseFloat(row.count) || 0;
+        const rate = parseFloat(row.rate) || 0;
+        const scaleRatio = totalScale>0 && sc ? ((sc/totalScale)*100).toFixed(1)+'%' : '--';
+        const weightedRate = totalScale>0 && rate ? ((sc/totalScale)*rate).toFixed(2)+'%' : '--';
+        const avgScale = sc && ct ? (sc/ct).toFixed(2) : '--';
+        mainSheet.push([
+          m.main,
+          s1.sub1,
+          row.sub2,
+          row.rate,
+          weightedRate,
+          sc,
+          scaleRatio,
+          ct,
+          avgScale
+        ]);
+      });
+    });
+  });
+
+  mainSheet.push(['合计','', '', '', weightedRateTotal.toFixed(2)+'%', totalScale.toFixed(2),'100%', totalCount.toFixed(0),'']);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(mainSheet), '主表');
+
+  function addSummarySheet(name, group){
+    const rows = [['分类','规模','占比']];
+    for(const key in group){
+      const val = group[key];
+      const ratio = totalScale>0 ? (val/totalScale*100).toFixed(0)+'%' : '0%';
+      rows.push([key, val.toFixed(0), ratio]);
+    }
+    rows.push(['合计', totalScale.toFixed(0), '100%']);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name);
+  }
+
+  addSummarySheet('按'+mainLabel+'统计', groupMain);
+  addSummarySheet('按'+sub1Label+'统计', groupSub1);
+  addSummarySheet('按'+sub2Label+'统计', groupSub2);
+  if(Object.keys(groupSub2Bracket).length>0){
+    addSummarySheet('按'+sub2Label+'(括号)统计', groupSub2Bracket);
+  }
+
+  XLSX.writeFile(wb, 'planning.xlsx');
+}
+
+function initParticles() {
+  const canvas = document.getElementById('particle-canvas');
+  const ctx = canvas.getContext('2d');
+  const colors = ['red','yellow','green','blue','purple'];
+  let particles = [];
+  let mouse = {x:-1000,y:-1000};
+  let blocks = [];
+
+  function resize(){
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    blocks = Array.from(document.querySelectorAll('#header,#content')).map(el=>el.getBoundingClientRect());
+  }
+  window.addEventListener('resize', resize);
+  window.addEventListener('scroll', resize, {passive:true});
+  resize();
+
+  const baseR = 3;
+  function outsideBlocks(x,y){
+    return !blocks.some(r=>x>r.left&&x<r.right&&y>r.top&&y<r.bottom);
+  }
+
+  function createParticle(x=Math.random()*canvas.width, y=Math.random()*canvas.height){
+    let px=x,py=y;
+    for(let i=0;i<10 && !outsideBlocks(px,py);i++){
+      px=Math.random()*canvas.width;
+      py=Math.random()*canvas.height;
+    }
+    return {
+      x:px,
+      y:py,
+      vx:(Math.random()-0.5)*2,
+      vy:(Math.random()-0.5)*2,
+      r: baseR*0.5 + Math.random()*baseR*1.5,
+      color: colors[Math.floor(Math.random()*colors.length)]
+    };
+  }
+
+  for(let i=0;i<50;i++) particles.push(createParticle());
+
+  document.addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;});
+  document.addEventListener('click',e=>{
+    for(let i=0;i<5;i++) particles.push(createParticle(e.clientX,e.clientY));
+  });
+
+  function step(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    for(let i=particles.length-1;i>=0;i--){
+      const p=particles[i];
+      p.x+=p.vx; p.y+=p.vy;
+      let hit=false;
+      if(p.x<0||p.x>canvas.width){p.vx*=-1;hit=true;}
+      if(p.y<0||p.y>canvas.height){p.vy*=-1;hit=true;}
+      if(particles.length>150 && hit){
+        particles.splice(i,1);
+        continue;
+      }
+      if(outsideBlocks(p.x,p.y)){
+        ctx.fillStyle=p.color;
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+        ctx.fill();
+      }
+    }
+    for(const p of particles){
+      const dist=Math.hypot(p.x-mouse.x,p.y-mouse.y);
+      if(dist<100 && outsideBlocks(p.x,p.y) && outsideBlocks(mouse.x,mouse.y)){
+        ctx.strokeStyle=`rgba(0,0,0,${Math.max(0,(100-dist)/100)})`;
+        ctx.lineWidth=1;
+        ctx.beginPath();
+        ctx.moveTo(p.x,p.y);
+        ctx.lineTo(mouse.x,mouse.y);
+        ctx.stroke();
+      }
+    }
+    requestAnimationFrame(step);
+  }
+  step();
+}
+
+window.addEventListener("DOMContentLoaded", function(){
+  initParticles();
+  renderTable();
+});
 </script>
 
 </body>
