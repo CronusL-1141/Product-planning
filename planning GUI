@@ -4,7 +4,13 @@
   <meta charset="UTF-8" />
   <title>产品规划静态原型</title>
   <style>
-    body { font-family: sans-serif; }
+    body { font-family: sans-serif; margin:0; }
+    #header { position: relative; text-align: center; margin-top: 10px; }
+    #logo { display:block; margin:0 auto; max-width:150px; }
+    #mascot { position:absolute; right:10px; top:50%; transform:translateY(-50%); width:100px; }
+    #page-title { text-align:center; margin-top:10px; }
+    #content { max-width:1200px; margin:20px auto; padding:10px; }
+    #particle-canvas { position:fixed; top:0; left:0; width:100%; height:100%; z-index:-1; pointer-events:none; }
     table { width: 100%; border-collapse: collapse; margin-top: 20px; }
     th, td {
       border: 1px solid #ccc;
@@ -44,7 +50,13 @@
 </head>
 <body>
 
-<h2 id="page-title" contenteditable="true" onblur="updateTitle()">2025年末目标 - 产品规划表</h2>
+<canvas id="particle-canvas"></canvas>
+<div id="header">
+  <img id="logo" src="LOGO.jpg" alt="LOGO">
+  <video id="mascot" src="元宝.mp4" autoplay loop muted></video>
+  <h2 id="page-title" contenteditable="true" onblur="updateTitle()">2025年末目标 - 产品规划表</h2>
+</div>
+<div id="content">
 <button onclick="addMain()">➕ 新主分类</button>
 <button id="auto-fill-btn" style="float:right" onclick="autoFill()">自动填充</button>
 <table>
@@ -70,6 +82,7 @@
 </table>
 
 <div id="summary"></div>
+</div>
 
 <script>
 var pageTitle = "2025年末目标 - 产品规划表";
@@ -457,7 +470,65 @@ function autoFill() {
   renderTable();
 }
 
-window.addEventListener("DOMContentLoaded", renderTable);
+function initParticles() {
+  const canvas = document.getElementById('particle-canvas');
+  const ctx = canvas.getContext('2d');
+  const colors = ['red','yellow','green','blue','purple'];
+  let particles = [];
+  let mouse = {x:-1000,y:-1000};
+
+  function resize(){
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function createParticle(x=Math.random()*canvas.width, y=Math.random()*canvas.height){
+    return {
+      x, y,
+      vx:(Math.random()-0.5)*2,
+      vy:(Math.random()-0.5)*2,
+      color: colors[Math.floor(Math.random()*colors.length)]
+    };
+  }
+
+  for(let i=0;i<50;i++) particles.push(createParticle());
+
+  document.addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;});
+  document.addEventListener('click',e=>{
+    for(let i=0;i<5;i++) particles.push(createParticle(e.clientX,e.clientY));
+  });
+
+  function step(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    particles.forEach(p=>{
+      p.x+=p.vx; p.y+=p.vy;
+      if(p.x<0||p.x>canvas.width) p.vx*=-1;
+      if(p.y<0||p.y>canvas.height) p.vy*=-1;
+      ctx.fillStyle=p.color;
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,3,0,Math.PI*2);
+      ctx.fill();
+    });
+    particles.forEach(p=>{
+      if(Math.hypot(p.x-mouse.x,p.y-mouse.y)<100){
+        ctx.strokeStyle=p.color;
+        ctx.beginPath();
+        ctx.moveTo(p.x,p.y);
+        ctx.lineTo(mouse.x,mouse.y);
+        ctx.stroke();
+      }
+    });
+    requestAnimationFrame(step);
+  }
+  step();
+}
+
+window.addEventListener("DOMContentLoaded", function(){
+  initParticles();
+  renderTable();
+});
 </script>
 
 </body>
