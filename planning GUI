@@ -49,9 +49,10 @@
   <tfoot>
     <tr>
       <td colspan="4">合计</td>
-      <td id="total-scale">0</td>
+      <td id="total-weighted-rate">--</td>
+      <td><input id="total-scale" type="number" onblur="totalScaleTarget=this.value; saveData();"></td>
       <td>100%</td>
-      <td id="total-count">0</td>
+      <td><input id="total-count" type="number" onblur="totalCountTarget=this.value; saveData();"></td>
       <td>--</td>
       <td></td>
     </tr>
@@ -66,6 +67,8 @@ var mainLabel = "主分类";
 var sub1Label = "子类一";
 var sub2Label = "子类二";
 var summaryLocks = {};
+var totalScaleTarget = null;
+var totalCountTarget = null;
 var data = loadData();
 
 const defaultData = [
@@ -101,7 +104,14 @@ function updateHeader(th, labelVar) {
 
 function saveData() {
   localStorage.setItem("productPlanningData", JSON.stringify({
-    data, pageTitle, mainLabel, sub1Label, sub2Label, summaryLocks
+    data,
+    pageTitle,
+    mainLabel,
+    sub1Label,
+    sub2Label,
+    summaryLocks,
+    totalScaleTarget,
+    totalCountTarget
   }));
 }
 
@@ -115,6 +125,8 @@ function loadData() {
     sub1Label = obj.sub1Label || sub1Label;
     sub2Label = obj.sub2Label || sub2Label;
     summaryLocks = obj.summaryLocks || {};
+    totalScaleTarget = obj.totalScaleTarget != null ? obj.totalScaleTarget : null;
+    totalCountTarget = obj.totalCountTarget != null ? obj.totalCountTarget : null;
     return obj.data || defaultData;
   } catch {
     return JSON.parse(JSON.stringify(defaultData));
@@ -140,7 +152,7 @@ function renderHeader() {
     };
     tr.appendChild(th);
   });
-  ["费率", "规模（亿元）", "占比", "只数", "单只规模", "操作"].forEach(text => {
+  ["费率", "加权费率", "规模（亿元）", "占比", "只数", "单只规模", "操作"].forEach(text => {
     const th = document.createElement("th");
     th.textContent = text;
     tr.appendChild(th);
@@ -154,9 +166,31 @@ function renderTable() {
   const tbody = document.getElementById("table-body");
   tbody.innerHTML = "";
 
-  let totalScale = 0, totalCount = 0;
+  let totalScale = 0,
+      totalCount = 0,
+      weightedSum = 0;
   let groupMain = {}, groupSub1 = {}, groupSub2 = {};
 
+  // first pass to gather totals
+  data.forEach(m => {
+    m.subs.forEach(s1 => {
+      s1.sub2s.forEach(row => {
+        const scale = parseFloat(row.scale) || 0;
+        const count = parseFloat(row.count) || 0;
+        const rate = parseFloat(row.rate) || 0;
+        totalScale += scale;
+        totalCount += count;
+        weightedSum += scale * rate;
+        groupMain[m.main] = (groupMain[m.main] || 0) + scale;
+        groupSub1[s1.sub1] = (groupSub1[s1.sub1] || 0) + scale;
+        groupSub2[row.sub2] = (groupSub2[row.sub2] || 0) + scale;
+      });
+    });
+  });
+
+  const weightedRateTotal = totalScale > 0 ? weightedSum / totalScale : 0;
+
+  // build table rows
   data.forEach((m, mi) => {
     m.subs.forEach((s1, si) => {
       s1.sub2s.forEach((row, ri) => {
@@ -179,19 +213,16 @@ function renderTable() {
 
         const scale = parseFloat(row.scale) || 0;
         const count = parseFloat(row.count) || 0;
-        totalScale += scale;
-        totalCount += count;
-        groupMain[m.main] = (groupMain[m.main] || 0) + scale;
-        groupSub1[s1.sub1] = (groupSub1[s1.sub1] || 0) + scale;
-        groupSub2[row.sub2] = (groupSub2[row.sub2] || 0) + scale;
-
+        const rate = parseFloat(row.rate) || 0;
         const scaleRatio = totalScale > 0 && scale ? ((scale / totalScale) * 100).toFixed(1) + "%" : "--";
+        const weightedRate = totalScale > 0 && rate ? ((scale / totalScale) * rate).toFixed(2) + "%" : "--";
         const avgScale = scale && count ? (scale / count).toFixed(2) : "--";
 
         const lockKey = `${mi}-${si}-${ri}`;
         tr.innerHTML += `
           <td><input class='editable' value='${row.sub2}' onblur='data[${mi}].subs[${si}].sub2s[${ri}].sub2=this.value; saveData(); renderTable()'></td>
           <td><input type='text' value='${row.rate}' onblur='data[${mi}].subs[${si}].sub2s[${ri}].rate=this.value; saveData()'></td>
+          <td>${weightedRate}</td>
           <td>
             <input type='number' value='${row.scale}' ${row.scaleLocked ? "disabled class='locked'" : ""}
               onblur='data[${mi}].subs[${si}].sub2s[${ri}].scale=this.value; saveData(); renderTable()'>
@@ -210,8 +241,11 @@ function renderTable() {
     });
   });
 
-  document.getElementById("total-scale").textContent = totalScale.toFixed(2);
-  document.getElementById("total-count").textContent = totalCount.toFixed(0);
+  const scaleInput = document.getElementById("total-scale");
+  const countInput = document.getElementById("total-count");
+  document.getElementById("total-weighted-rate").textContent = totalScale > 0 ? weightedRateTotal.toFixed(2) + "%" : "--";
+  scaleInput.value = totalScaleTarget != null ? totalScaleTarget : totalScale.toFixed(2);
+  countInput.value = totalCountTarget != null ? totalCountTarget : totalCount.toFixed(0);
   document.getElementById("summary").innerHTML =
     renderSummary("main", groupMain, totalScale) +
     renderSummary("sub1", groupSub1, totalScale) +
