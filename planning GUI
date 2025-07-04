@@ -58,6 +58,8 @@
 </div>
 <div id="content">
 <button onclick="addMain()">➕ 新主分类</button>
+<button id="download-btn" style="float:right" onclick="downloadExcel()">下载</button>
+<button id="undo-btn" style="float:right" onclick="undoData()">回退</button>
 <button id="auto-fill-btn" style="float:right" onclick="autoFill()">自动填充</button>
 <table>
   <thead id="table-header"></thead>
@@ -84,6 +86,7 @@
 <div id="summary"></div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 var pageTitle = "2025年末目标 - 产品规划表";
 var mainLabel = "主分类";
@@ -132,8 +135,8 @@ function updateHeader(th, labelVar) {
 }
 
 
-function saveData() {
-  localStorage.setItem("productPlanningData", JSON.stringify({
+function saveData(skipBackup) {
+  const current = JSON.stringify({
     data,
     pageTitle,
     mainLabel,
@@ -145,7 +148,12 @@ function saveData() {
     totalCountTarget,
     totalScaleLocked,
     totalCountLocked
-  }));
+  });
+  if (!skipBackup) {
+    const prev = localStorage.getItem("productPlanningData");
+    if (prev !== null) localStorage.setItem("productPlanningPrev", prev);
+  }
+  localStorage.setItem("productPlanningData", current);
 }
 
 function loadData() {
@@ -468,6 +476,38 @@ function autoFill() {
 
   saveData();
   renderTable();
+}
+
+function undoData() {
+  const prev = localStorage.getItem('productPlanningPrev');
+  if (!prev) {
+    alert('没有可回退的数据');
+    return;
+  }
+  const obj = JSON.parse(prev);
+  data = obj.data || [];
+  pageTitle = obj.pageTitle || pageTitle;
+  mainLabel = obj.mainLabel || mainLabel;
+  sub1Label = obj.sub1Label || sub1Label;
+  sub2Label = obj.sub2Label || sub2Label;
+  summaryLocks = obj.summaryLocks || {};
+  summaryRatioTargets = obj.summaryRatioTargets || {};
+  totalScaleTarget = obj.totalScaleTarget;
+  totalCountTarget = obj.totalCountTarget;
+  totalScaleLocked = obj.totalScaleLocked || false;
+  totalCountLocked = obj.totalCountLocked || false;
+  saveData(true);
+  renderTable();
+}
+
+function downloadExcel() {
+  if (typeof XLSX === 'undefined') {
+    alert('无法加载导出库');
+    return;
+  }
+  const table = document.querySelector('table');
+  const wb = XLSX.utils.table_to_book(table, {sheet: 'Sheet1'});
+  XLSX.writeFile(wb, 'planning.xlsx');
 }
 
 function initParticles() {
