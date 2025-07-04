@@ -376,14 +376,14 @@ function addSub2(mi, si) {
 function updateScale(mi, si, ri, val) {
   data[mi].subs[si].sub2s[ri].scale = val;
   saveData();
-  if (totalScaleLocked || totalCountLocked) autoFill();
+  if (totalScaleLocked || totalCountLocked) autoFill({skipScale:`${mi}-${si}-${ri}`});
   else renderTable();
 }
 
 function updateCount(mi, si, ri, val) {
   data[mi].subs[si].sub2s[ri].count = val;
   saveData();
-  if (totalScaleLocked || totalCountLocked) autoFill();
+  if (totalScaleLocked || totalCountLocked) autoFill({skipCount:`${mi}-${si}-${ri}`});
   else renderTable();
 }
 function deleteRow(mi, si, ri) {
@@ -439,7 +439,7 @@ function handleTotalBlur(type) {
   }
 }
 
-function autoFill() {
+function autoFill(opts = {}) {
   // gather totals and group info
   let totalScale = 0,
       totalCount = 0;
@@ -450,14 +450,15 @@ function autoFill() {
     groups[mainKey] = groups[mainKey] || {rows: [], lockedScale: 0, currentScale:0};
     m.subs.forEach((s1, si) => {
       s1.sub2s.forEach((row, ri) => {
+        const rowKey = `${mi}-${si}-${ri}`;
         const scale = parseFloat(row.scale) || 0;
         const count = parseFloat(row.count) || 0;
         totalScale += scale;
         totalCount += count;
-        const info = {row, scale, count};
+        const info = {row, scale, count, key: rowKey};
         groups[mainKey].rows.push(info);
         groups[mainKey].currentScale += scale;
-        if (row.scaleLocked) groups[mainKey].lockedScale += scale;
+        if (row.scaleLocked || opts.skipScale === rowKey) groups[mainKey].lockedScale += scale;
       });
     });
   });
@@ -473,7 +474,7 @@ function autoFill() {
     const ratioTarget = ratioLocked ? parseFloat(summaryRatioTargets[lockKey]) || 0 : (g.currentScale/totalScale*100);
     const targetGroupScale = targetScale * ratioTarget / 100;
 
-    let unlocked = g.rows.filter(r => !r.row.scaleLocked);
+    let unlocked = g.rows.filter(r => !r.row.scaleLocked && r.key !== opts.skipScale);
     const withVal = unlocked.filter(r => r.row.scale);
     const empty = unlocked.filter(r => !r.row.scale);
     let remain = Math.max(targetGroupScale - g.lockedScale, 0);
@@ -492,36 +493,37 @@ function autoFill() {
   let lockedCount = 0;
   const countWithVal = [];
   const countEmpty = [];
-  data.forEach(m => {
-    m.subs.forEach(s1 => {
-      s1.sub2s.forEach(row => {
+  data.forEach((m, mi) => {
+    m.subs.forEach((s1, si) => {
+      s1.sub2s.forEach((row, ri) => {
+        const rowKey = `${mi}-${si}-${ri}`;
         const sc = parseFloat(row.scale) || 0;
         const ct = parseFloat(row.count) || 0;
         totalScale += sc;
         totalCount += ct;
-        if (row.countLocked) {
+        if (row.countLocked || opts.skipCount === rowKey) {
           lockedCount += ct;
         } else {
-          if (ct) countWithVal.push(row); else countEmpty.push(row);
+          if (ct) countWithVal.push({row, key: rowKey}); else countEmpty.push({row, key: rowKey});
         }
       });
     });
   });
 
   const targetCountAvail = targetCount - lockedCount;
-  const sumCountWithVal = countWithVal.reduce((s, r) => s + (parseFloat(r.count) || 0), 0);
+  const sumCountWithVal = countWithVal.reduce((s, r) => s + (parseFloat(r.row.count) || 0), 0);
   const countFactor = sumCountWithVal > 0 ? targetCountAvail / sumCountWithVal : 0;
-  countWithVal.forEach(r => { r.count = Math.round((parseFloat(r.count) || 0) * countFactor); });
+  countWithVal.forEach(r => { r.row.count = Math.round((parseFloat(r.row.count) || 0) * countFactor); });
   if (countEmpty.length > 0) {
     const per = Math.max(targetCountAvail - sumCountWithVal * countFactor, 0) / countEmpty.length;
-    countEmpty.forEach(r => { r.count = Math.round(per); });
+    countEmpty.forEach(r => { r.row.count = Math.round(per); });
   }
-  let currentTotal = lockedCount + countWithVal.reduce((s,r)=>s+r.count,0) + countEmpty.reduce((s,r)=>s+r.count,0);
+  let currentTotal = lockedCount + countWithVal.reduce((s,r)=>s+r.row.count,0) + countEmpty.reduce((s,r)=>s+r.row.count,0);
   let diff = targetCount - currentTotal;
   const adjustList = countWithVal.concat(countEmpty);
   let i = 0;
   while (diff !== 0 && adjustList.length > 0) {
-    adjustList[i % adjustList.length].count += diff > 0 ? 1 : -1;
+    adjustList[i % adjustList.length].row.count += diff > 0 ? 1 : -1;
     diff += diff > 0 ? -1 : 1;
     i++;
   }
